@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -84,6 +85,35 @@ func updateWithResolvedDigest(template *corev1.PodTemplateSpec, imageDigest map[
 	}
 }
 
+func updateWithRunAsUser(template *corev1.PodTemplateSpec, configFile *v1.ConfigFile, image string) {
+	if configFile.Config.User == "" {
+		return
+	}
+
+	uid, err := strconv.Atoi(configFile.Config.User)
+	if err != nil {
+		fmt.Printf("error with cintainer user %s", err)
+	}
+
+	var uid64 *int64 = new(int64)
+	*uid64 = int64(uid)
+
+	for i := range template.Spec.InitContainers {
+		c := &template.Spec.InitContainers[i]
+		if c.Image == image {
+			c.SecurityContext.RunAsUser = uid64
+		}
+		template.Spec.InitContainers[i] = *c
+	}
+	for i := range template.Spec.Containers {
+		c := &template.Spec.Containers[i]
+		if c.Image == image {
+			c.SecurityContext.RunAsUser = uid64
+		}
+		template.Spec.Containers[i] = *c
+	}
+}
+
 func (rc *RegistryConfig) ResolveImageMetadata(ctx context.Context, template *corev1.PodTemplateSpec) ([]webhookv1alpha1.ImageConfig, error) {
 	if template == nil {
 		return nil, nil
@@ -102,6 +132,7 @@ func (rc *RegistryConfig) ResolveImageMetadata(ctx context.Context, template *co
 			}
 			imageConfigList = append(imageConfigList, imageConfig)
 			imageDigest[image] = imageConfig.Image
+			updateWithRunAsUser(template, &imageConfig.Config, image)
 		}
 	}
 	if len(imageErrMap) > 0 {
@@ -109,6 +140,7 @@ func (rc *RegistryConfig) ResolveImageMetadata(ctx context.Context, template *co
 	}
 	// update workload with resolved the image references.
 	updateWithResolvedDigest(template, imageDigest)
+
 	return imageConfigList, nil
 }
 
